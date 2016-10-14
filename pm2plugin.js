@@ -8,6 +8,7 @@ var ver = config.nrversion;
 var license = config.nrlicense;
 var guid = config.nrguid;
 var url = config.nrurl;
+var _ = require('lodash')._;
 
 function poll()
 {
@@ -30,56 +31,75 @@ function poll()
 			agent.version = ver;
 
 			// Create the components array (with only 1 value)
-			var components = [];
-			msg.components = components;
-			components[0] = {};
-			components[0].name = os.hostname();
-			components[0].guid = guid;
-			components[0].duration = 30;
+			var components = {};
 
-			// Create the metrics subsection
-			var metrics = {};
-			components[0].metrics = metrics;
-			var totalUptime = 0;
-			var totalRestarts = 0;
-			var totalCpu = 0;
-			var totalMemory = 0;
-
-			// Pull down data for each function
 			list.forEach(function(proc) {
+                var pname = proc.pm2_env.name;
 
-				// Get the metrics
-				var processName = proc.pm2_env.name;
-				var processUptime = calcUptime(proc.pm2_env.pm_uptime);
-				var processRestarts = proc.pm2_env.restart_time;
-				var processCpu = proc.monit.cpu;
-				var processMemory = proc.monit.memory;
 
-				// Store the metrics
-				var namePrefix = 'Component/process/' + processName;
-				metrics[namePrefix + '[uptime]'] = processUptime;
-				metrics[namePrefix + '[restarts]'] = processRestarts;
-				metrics[namePrefix + '[cpu]'] = processCpu;
-				metrics[namePrefix + '[memory]'] = processMemory;
+                var metrics = {
+                    uptime   : calcUptime(proc.pm2_env.pm_uptime),
+                    restarts : proc.pm2_env.restart_time,
+                    cpu      : proc.monit.cpu,
+                    memory   : proc.monit.memory,
+                };
 
-				// Increment the totals
-				totalUptime += processUptime;
-				totalRestarts += processRestarts;
-				totalCpu += processCpu;
-				totalMemory += processMemory;
+                if(!components[pname]) {
+                    components[pname] = {
+                        name     : proc.pm2_env.name,
+                        guid     : guid,
+                        duration : 30,
+                        metrics: []
+                    };
+                }
+
+                components[pname].metrics.push(metrics);
 			});
 
-			// Create the rollup metrics
-			metrics['Component/rollup/all[uptime]'] = totalUptime;
-			metrics['Component/rollup/all[restarts]'] = totalRestarts;
-			metrics['Component/rollup/all[cpu]'] = totalCpu;
-			metrics['Component/rollup/all[memory]'] = totalMemory;
-	
-			// console.log(msg.components[0]);
+
+            msg.components = [];
+
+            _.each(components, function(comp) {
+
+                var metrics       = {};
+                var proccount     = 1;
+                var totalUptime   = 0;
+                var totalRestarts = 0;
+                var totalCpu      = 0;
+                var totalMemory   = 0;
+
+                _.each(comp.metrics, function(metric) {
+                    var pname = comp.name + proccount;
+                    metrics['Component/process/'+pname+'[uptime]'] = metric.uptime;
+                    metrics['Component/process/'+pname+'[restarts]'] = metric.restarts;
+                    metrics['Component/process/'+pname+'[cpu]'] = metric.cpu;
+                    metrics['Component/process/'+pname+'[memory]'] = metric.memory;
+
+                    totalUptime   +=metric.uptime;
+                    totalRestarts +=metric.restarts;
+                    totalCpu      +=metric.cpu;
+                    totalMemory   +=metric.memory;
+                    proccount++;
+                });
+
+                metrics['Component/rollup/all[uptime]'] = totalUptime;
+                metrics['Component/rollup/all[restarts]'] = totalRestarts;
+                metrics['Component/rollup/all[cpu]'] = totalCpu;
+                metrics['Component/rollup/all[memory]'] = totalMemory;
+
+                comp.metrics = metrics;
+                msg.components.push(comp);
+            });
+
+
+
+
+			//console.log(components);
+            console.log(msg.components);
 			postToNewRelic(msg);
 
 			// Disconnect from PM2
-			pm2.disconnect();
+			//pm2.disconnect();
 		});
 	});
 
